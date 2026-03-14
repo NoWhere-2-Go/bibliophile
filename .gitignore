@@ -1,0 +1,86 @@
+# .gitignore for Bibliophile RAG Project
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Vector stores and data
+chroma_db/
+chroma_db_*/
+*.db
+*.sqlite*
+*.parquet
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.project
+.pydevproject
+.settings/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.backup
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE - VSCode
+.vscode/
+*.code-workspace
+
+# IDE - PyCharm
+.idea/
+*.iml
+
+# Ollama
+ollama_cache/
+ollama_models/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Node (if frontend is added)
+node_modules/
+npm-debug.log
+package-lock.json
+

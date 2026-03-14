@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RAG Book Recommendation — Architecture</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,500;1,400&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #0d0b08;
+    --vellum: #1a1610;
+    --parchment: #c8a96e;
+    --parchment-dim: #8a6f42;
+    --amber: #e8913a;
+    --amber-glow: #f4a84a;
+    --cream: #f0e6cc;
+    --ash: #6b6358;
+    --rust: #8b3a2a;
+    --teal: #2a6b6b;
+    --teal-light: #3d9999;
+    --sage: #4a7c59;
+    --sage-light: #6aaa7d;
+    --lavender: #5a4a7a;
+    --lavender-light: #8a72b8;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background-color: var(--ink);
+    font-family: 'EB Garamond', Georgia, serif;
+    color: var(--cream);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Noise texture overlay */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 1000;
+    opacity: 0.6;
+  }
+
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 40px 80px;
+  }
+
+  /* ── Header ── */
+  header {
+    text-align: center;
+    margin-bottom: 64px;
+    animation: fadeDown 0.9s ease both;
+  }
+
+  .eyebrow {
+    font-family: 'Courier Prime', monospace;
+    font-size: 11px;
+    letter-spacing: 0.35em;
+    text-transform: uppercase;
+    color: var(--parchment-dim);
+    margin-bottom: 14px;
+  }
+
+  h1 {
+    font-family: 'Playfair Display', Georgia, serif;
+    font-size: clamp(28px, 4vw, 52px);
+    font-weight: 700;
+    color: var(--cream);
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+
+  h1 em {
+    font-style: italic;
+    color: var(--parchment);
+  }
+
+  .subtitle {
+    margin-top: 12px;
+    font-size: 16px;
+    color: var(--ash);
+    font-style: italic;
+  }
+
+  .divider {
+    margin: 20px auto 0;
+    width: 120px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--parchment-dim), transparent);
+  }
+
+  /* ── Legend ── */
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 28px;
+    flex-wrap: wrap;
+    margin-bottom: 52px;
+    animation: fadeUp 0.9s 0.2s ease both;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-family: 'Courier Prime', monospace;
+    letter-spacing: 0.05em;
+    color: var(--ash);
+  }
+
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 2px;
+  }
+
+  /* ── Main diagram grid ── */
+  .diagram {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr 60px 1fr 60px 1fr;
+    grid-template-rows: auto;
+    gap: 0;
+    align-items: center;
+  }
+
+  /* ── Columns ── */
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .col-label {
+    font-family: 'Courier Prime', monospace;
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: var(--parchment-dim);
+    text-align: center;
+    margin-bottom: 8px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #2a2520;
+  }
+
+  /* ── Cards ── */
+  .card {
+    position: relative;
+    border-radius: 6px;
+    padding: 18px 16px;
+    border: 1px solid transparent;
+    transition: transform 0.25s ease, box-shadow 0.25s ease;
+    cursor: default;
+  }
+
+  .card:hover {
+    transform: translateY(-2px);
+  }
+
+  .card-icon {
+    font-size: 22px;
+    margin-bottom: 8px;
+    display: block;
+    line-height: 1;
+  }
+
+  .card-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--cream);
+    margin-bottom: 4px;
+  }
+
+  .card-desc {
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--ash);
+    font-style: italic;
+  }
+
+  .card-tag {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    font-family: 'Courier Prime', monospace;
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 2px 6px;
+    border-radius: 2px;
+  }
+
+  /* Color variants */
+  .card.amber {
+    background: linear-gradient(135deg, #1f1a0f 0%, #251e10 100%);
+    border-color: #3d2e10;
+    box-shadow: 0 0 20px rgba(232,145,58,0.08), inset 0 1px 0 rgba(232,145,58,0.1);
+  }
+  .card.amber:hover { box-shadow: 0 4px 30px rgba(232,145,58,0.18), inset 0 1px 0 rgba(232,145,58,0.1); }
+  .card.amber .card-tag { background: rgba(232,145,58,0.15); color: var(--amber); }
+
+  .card.teal {
+    background: linear-gradient(135deg, #0c1c1c 0%, #0f2222 100%);
+    border-color: #1a3a3a;
+    box-shadow: 0 0 20px rgba(42,107,107,0.1), inset 0 1px 0 rgba(61,153,153,0.1);
+  }
+  .card.teal:hover { box-shadow: 0 4px 30px rgba(42,107,107,0.2), inset 0 1px 0 rgba(61,153,153,0.1); }
+  .card.teal .card-tag { background: rgba(61,153,153,0.15); color: var(--teal-light); }
+
+  .card.sage {
+    background: linear-gradient(135deg, #0d1a10 0%, #111f14 100%);
+    border-color: #1e3d25;
+    box-shadow: 0 0 20px rgba(74,124,89,0.1), inset 0 1px 0 rgba(106,170,125,0.1);
+  }
+  .card.sage:hover { box-shadow: 0 4px 30px rgba(74,124,89,0.2), inset 0 1px 0 rgba(106,170,125,0.1); }
+  .card.sage .card-tag { background: rgba(106,170,125,0.15); color: var(--sage-light); }
+
+  .card.lavender {
+    background: linear-gradient(135deg, #120f1e 0%, #161224 100%);
+    border-color: #2a2240;
+    box-shadow: 0 0 20px rgba(90,74,122,0.1), inset 0 1px 0 rgba(138,114,184,0.1);
+  }
+  .card.lavender:hover { box-shadow: 0 4px 30px rgba(90,74,122,0.2), inset 0 1px 0 rgba(138,114,184,0.1); }
+  .card.lavender .card-tag { background: rgba(138,114,184,0.15); color: var(--lavender-light); }
+
+  /* central vector store — hero card */
+  .card.hero {
+    background: linear-gradient(160deg, #1a1408 0%, #231b0a 60%, #1a1408 100%);
+    border-color: #5a3e14;
+    padding: 26px 20px;
+    box-shadow: 0 0 40px rgba(232,145,58,0.15), inset 0 1px 0 rgba(232,145,58,0.15);
+  }
+  .card.hero:hover { box-shadow: 0 4px 50px rgba(232,145,58,0.28), inset 0 1px 0 rgba(232,145,58,0.2); }
+  .card.hero .card-title { font-size: 16px; color: var(--parchment); }
+  .card.hero .card-icon { font-size: 30px; }
+
+  /* ── Arrows ── */
+  .arrow-col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    height: 100%;
+  }
+
+  .arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .arrow-line {
+    width: 2px;
+    height: 40px;
+    background: linear-gradient(180deg, transparent, var(--parchment-dim) 40%, var(--amber) 100%);
+    position: relative;
+  }
+
+  .arrow-line::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 7px solid var(--amber);
+  }
+
+  .arrow-label {
+    font-family: 'Courier Prime', monospace;
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    color: var(--parchment-dim);
+    text-align: center;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    margin-top: 10px;
+    white-space: nowrap;
+  }
+
+  /* horizontal arrows */
+  .h-arrow {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .h-arrow-line {
+    width: 100%;
+    height: 2px;
+    background: linear-gradient(90deg, var(--parchment-dim), var(--amber));
+    position: relative;
+  }
+  .h-arrow-line::after {
+    content: '';
+    position: absolute;
+    right: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-left: 7px solid var(--amber);
+  }
+
+  .h-arrow-label {
+    font-family: 'Courier Prime', monospace;
+    font-size: 8px;
+    letter-spacing: 0.08em;
+    color: var(--parchment-dim);
+    white-space: nowrap;
+  }
+
+  /* bidirectional arrow */
+  .h-arrow-line.bidir::before {
+    content: '';
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    transform: translateY(-50%);
+    border-top: 5px solid transparent;
+    border-bottom: 5px solid transparent;
+    border-right: 7px solid var(--teal-light);
+  }
+  .h-arrow-line.bidir {
+    background: linear-gradient(90deg, var(--teal-light), var(--parchment-dim), var(--amber));
+  }
+  .h-arrow-line.bidir::after {
+    border-left-color: var(--amber);
+  }
+
+  /* ── Section rows (ingestion + query run in parallel) ── */
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* top label row */
+  .phase-labels {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr 60px 1fr 60px 1fr;
+    margin-bottom: 10px;
+    animation: fadeUp 0.8s 0.15s ease both;
+  }
+
+  .phase-label {
+    font-family: 'Courier Prime', monospace;
+    font-size: 9px;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    text-align: center;
+    padding: 6px 0;
+    border-top: 1px solid;
+  }
+
+  .phase-label.amber-phase { color: var(--amber); border-color: var(--amber); }
+  .phase-label.teal-phase  { color: var(--teal-light); border-color: var(--teal-light); }
+  .phase-label.sage-phase  { color: var(--sage-light); border-color: var(--sage-light); }
+  .phase-label.lavender-phase { color: var(--lavender-light); border-color: var(--lavender-light); }
+  .phase-label.blank { border-color: transparent; }
+
+  /* row  */
+  .flow-row {
+    display: grid;
+    grid-template-columns: 1fr 60px 1fr 60px 1fr 60px 1fr;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 8px;
+  }
+
+  /* ── Dual-path indicator ── */
+  .dual-path-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(138,114,184,0.12);
+    border: 1px solid rgba(138,114,184,0.25);
+    border-radius: 4px;
+    padding: 5px 10px;
+    font-family: 'Courier Prime', monospace;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--lavender-light);
+  }
+
+  .or-pill {
+    background: var(--lavender);
+    color: white;
+    font-size: 9px;
+    padding: 1px 5px;
+    border-radius: 10px;
+    letter-spacing: 0.05em;
+  }
+
+  /* ── Data flow section ── */
+  .section-title {
+    font-family: 'Playfair Display', serif;
+    font-size: 13px;
+    font-style: italic;
+    color: var(--parchment-dim);
+    margin: 32px 0 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .section-title::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(90deg, #2a2520, transparent);
+  }
+
+  /* ── Bottom notes ── */
+  .notes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 48px;
+    animation: fadeUp 0.9s 0.5s ease both;
+  }
+
+  .note-card {
+    background: #12100c;
+    border: 1px solid #2a2520;
+    border-radius: 6px;
+    padding: 16px;
+  }
+
+  .note-card h3 {
+    font-family: 'Playfair Display', serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--parchment);
+    margin-bottom: 8px;
+  }
+
+  .note-card ul {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+
+  .note-card li {
+    font-size: 12px;
+    color: var(--ash);
+    font-style: italic;
+    padding-left: 14px;
+    position: relative;
+  }
+
+  .note-card li::before {
+    content: '—';
+    position: absolute;
+    left: 0;
+    color: var(--parchment-dim);
+  }
+
+  /* ── Animations ── */
+  @keyframes fadeDown {
+    from { opacity: 0; transform: translateY(-16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .flow-row { animation: fadeUp 0.7s ease both; }
+  .flow-row:nth-child(1) { animation-delay: 0.2s; }
+  .flow-row:nth-child(2) { animation-delay: 0.35s; }
+  .flow-row:nth-child(3) { animation-delay: 0.5s; }
+  .flow-row:nth-child(4) { animation-delay: 0.65s; }
+  .flow-row:nth-child(5) { animation-delay: 0.8s; }
+
+  /* glow pulse on hero */
+  @keyframes glowPulse {
+    0%,100% { box-shadow: 0 0 40px rgba(232,145,58,0.15), inset 0 1px 0 rgba(232,145,58,0.15); }
+    50%      { box-shadow: 0 0 60px rgba(232,145,58,0.28), inset 0 1px 0 rgba(232,145,58,0.2); }
+  }
+  .card.hero { animation: glowPulse 3s ease-in-out infinite; }
+
+  /* flowing line animation */
+  @keyframes flowRight {
+    0%   { background-position: -200% 0; }
+    100% { background-position: 200% 0; }
+  }
+  .h-arrow-line {
+    background-size: 200% 100%;
+    animation: flowRight 2.5s linear infinite;
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .diagram, .flow-row, .phase-labels {
+      grid-template-columns: 1fr;
+    }
+    .arrow-col, .h-arrow { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Header -->
+  <header>
+    <p class="eyebrow">System Architecture · Retrieval-Augmented Generation</p>
+    <h1><em>The Bibliophile's</em> RAG Engine</h1>
+    <p class="subtitle">Book Recommendation System · DeepSeek R1 / Ollama</p>
+    <div class="divider"></div>
+  </header>
+
+  <!-- Legend -->
+  <div class="legend">
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#3d2e10;border:1px solid var(--amber)"></div>
+      Ingestion Layer
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#1a3a3a;border:1px solid var(--teal-light)"></div>
+      Vector Store
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#1e3d25;border:1px solid var(--sage-light)"></div>
+      Query Layer
+    </div>
+    <div class="legend-item">
+      <div class="legend-dot" style="background:#2a2240;border:1px solid var(--lavender-light)"></div>
+      Generation Layer
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       PHASE 1 — INGESTION (Offline / One-time)
+  ══════════════════════════════════════════ -->
+  <p class="section-title">Phase I · Offline Ingestion Pipeline</p>
+
+  <div class="flow-row">
+    <!-- Book Sources -->
+    <div class="card amber">
+      <span class="card-tag">SOURCE</span>
+      <span class="card-icon">📚</span>
+      <div class="card-title">Book Corpus</div>
+      <div class="card-desc">PDFs, EPUBs, plain text. Project Gutenberg, curated library, or user uploads.</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">parse</div>
+    </div>
+
+    <!-- Chunking -->
+    <div class="card amber">
+      <span class="card-tag">PROCESS</span>
+      <span class="card-icon">✂️</span>
+      <div class="card-title">Text Chunker</div>
+      <div class="card-desc">Recursive character splitting. ~512 token chunks with 64 token overlap. Metadata preserved: title, author, genre, chapter.</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">embed</div>
+    </div>
+
+    <!-- Embedding Model -->
+    <div class="card amber">
+      <span class="card-tag">MODEL</span>
+      <span class="card-icon">🔢</span>
+      <div class="card-title">Embedding Model</div>
+      <div class="card-desc">nomic-embed-text (Ollama) or sentence-transformers. Produces dense vectors per chunk.</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">index</div>
+    </div>
+
+    <!-- Vector Store -->
+    <div class="card hero teal">
+      <span class="card-icon">🗄️</span>
+      <div class="card-title">Vector Store</div>
+      <div class="card-desc">ChromaDB or Qdrant. Stores embeddings + metadata. Persists to disk between runs.</div>
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <span class="dual-path-badge" style="font-size:9px;padding:3px 8px;color:var(--teal-light);border-color:rgba(61,153,153,0.3)">ChromaDB</span>
+        <span class="or-pill">or</span>
+        <span class="dual-path-badge" style="font-size:9px;padding:3px 8px;color:var(--teal-light);border-color:rgba(61,153,153,0.3)">Qdrant</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       PHASE 2 — QUERY (Runtime)
+  ══════════════════════════════════════════ -->
+  <p class="section-title" style="margin-top:48px">Phase II · Runtime Query Pipeline</p>
+
+  <div class="flow-row">
+    <!-- User Query -->
+    <div class="card sage">
+      <span class="card-tag">INPUT</span>
+      <span class="card-icon">💬</span>
+      <div class="card-title">User Query</div>
+      <div class="card-desc">Natural language request. e.g. "Books like Dune with philosophical depth" or genre/mood filters.</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">embed</div>
+    </div>
+
+    <!-- Query Embedding -->
+    <div class="card sage">
+      <span class="card-tag">PROCESS</span>
+      <span class="card-icon">🧭</span>
+      <div class="card-title">Query Embedding</div>
+      <div class="card-desc">Same embedding model as ingestion. Query → dense vector for similarity search.</div>
+    </div>
+
+    <!-- arrow (bidirectional — retrieval) -->
+    <div class="h-arrow">
+      <div class="h-arrow-line bidir"></div>
+      <div class="h-arrow-label">top-k ANN</div>
+    </div>
+
+    <!-- Retriever -->
+    <div class="card teal">
+      <span class="card-tag">RETRIEVE</span>
+      <span class="card-icon">🔍</span>
+      <div class="card-title">Semantic Retriever</div>
+      <div class="card-desc">Cosine similarity search. Top-k=5–10 chunks returned. Optional metadata filter (genre, era, rating).</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">augment</div>
+    </div>
+
+    <!-- Context Builder -->
+    <div class="card lavender">
+      <span class="card-tag">BUILD</span>
+      <span class="card-icon">📝</span>
+      <div class="card-title">Context Builder</div>
+      <div class="card-desc">Assembles prompt with retrieved passages + user query. Formats system prompt for recommendation style.</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       PHASE 3 — GENERATION
+  ══════════════════════════════════════════ -->
+  <p class="section-title" style="margin-top:48px">Phase III · Generation & Response</p>
+
+  <div class="flow-row">
+    <!-- Prompt -->
+    <div class="card lavender">
+      <span class="card-tag">PROMPT</span>
+      <span class="card-icon">📜</span>
+      <div class="card-title">Augmented Prompt</div>
+      <div class="card-desc">System role + retrieved context chunks + user query. Structured to elicit ranked recommendations with rationale.</div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line"></div>
+      <div class="h-arrow-label">infer</div>
+    </div>
+
+    <!-- LLM -->
+    <div class="card lavender" style="grid-column: span 3">
+      <span class="card-tag">LLM</span>
+      <span class="card-icon">🧠</span>
+      <div class="card-title">Reasoning Model</div>
+      <div class="card-desc" style="margin-bottom:12px">Local inference via Ollama API (localhost:11434) or DeepSeek R1 API. Reads context, reasons over book passages, generates nuanced recommendations.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <span class="dual-path-badge">DeepSeek R1 <span class="or-pill">API</span></span>
+        <span style="color:var(--ash);font-size:11px;font-style:italic">·</span>
+        <span class="dual-path-badge">deepseek-r1:7b <span class="or-pill">Ollama</span></span>
+        <span style="color:var(--ash);font-size:11px;font-style:italic">·</span>
+        <span class="dual-path-badge">deepseek-r1:14b <span class="or-pill">Ollama</span></span>
+      </div>
+    </div>
+
+    <!-- arrow -->
+    <div class="h-arrow">
+      <div class="h-arrow-line" style="background:linear-gradient(90deg,var(--lavender-light),var(--parchment))"></div>
+      <div class="h-arrow-label">respond</div>
+    </div>
+
+    <!-- Response -->
+    <div class="card amber">
+      <span class="card-tag">OUTPUT</span>
+      <span class="card-icon">✨</span>
+      <div class="card-title">Recommendation</div>
+      <div class="card-desc">Ranked list with summaries, similarity rationale, and passage excerpts. Streamed to UI.</div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════
+       IMPLEMENTATION NOTES
+  ══════════════════════════════════════════ -->
+  <div class="notes-grid">
+    <div class="note-card">
+      <h3>🛠 Stack</h3>
+      <ul>
+        <li>Python 3.11+ backend</li>
+        <li>LangChain or LlamaIndex for orchestration</li>
+        <li>FastAPI for REST / WebSocket</li>
+        <li>Ollama running locally</li>
+        <li>ChromaDB persisted to ./chroma_db</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h3>📊 Embedding Strategy</h3>
+      <ul>
+        <li>nomic-embed-text (768-dim, via Ollama)</li>
+        <li>Chunk size 512 tokens, overlap 64</li>
+        <li>Metadata: title, author, genre, year</li>
+        <li>Re-ranking optional (cross-encoder)</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h3>🔀 Model Routing</h3>
+      <ul>
+        <li>Env var selects DeepSeek API vs Ollama</li>
+        <li>Ollama: deepseek-r1:7b (fast) or :14b (quality)</li>
+        <li>Streaming responses via SSE</li>
+        <li>Fallback chain on model unavailability</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h3>⚡ Performance</h3>
+      <ul>
+        <li>Ingestion is one-time / incremental</li>
+        <li>Query latency dominated by LLM inference</li>
+        <li>Cache embeddings; skip re-ingested books</li>
+        <li>GPU acceleration via Ollama if available</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h3>🔒 Offline-First</h3>
+      <ul>
+        <li>Full pipeline runs air-gapped with Ollama</li>
+        <li>No data sent externally (unless DeepSeek API)</li>
+        <li>Books stay on local filesystem</li>
+        <li>ChromaDB persists between restarts</li>
+      </ul>
+    </div>
+    <div class="note-card">
+      <h3>🚀 Extensions</h3>
+      <ul>
+        <li>Hybrid search (BM25 + vector) for recall</li>
+        <li>User preference memory across sessions</li>
+        <li>Goodreads / OpenLibrary metadata enrichment</li>
+        <li>Reranker: ms-marco-MiniLM cross-encoder</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
