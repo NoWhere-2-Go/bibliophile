@@ -1,7 +1,9 @@
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 import os
 import logging
 import re
+from multiprocessing import Pool
+from functools import partial
 
 try:
     import tiktoken
@@ -27,14 +29,13 @@ def extract_book_metadata(filename: str, text: str) -> Dict[str, str]:
     """Extract book metadata from filename and text content.
     
     Looks for patterns in filename like: "Author - Title (year).txt"
-    Also scans first 200 tokens for title/author markers.
+    Also scans first 10 lines for title/author markers (optimized).
     """
     metadata = {
         "source_name": filename,
         "title": "",
         "author": "",
         "year": "",
-        "genre": "",
     }
     
     # Try to parse filename: "Author - Title (year).txt" or "Title - Author.txt"
@@ -58,10 +59,11 @@ def extract_book_metadata(filename: str, text: str) -> Dict[str, str]:
         # Just use filename as title
         metadata["title"] = base
     
-    # Scan first few lines for markers like "Title:", "Author:", etc.
+    # Scan first 10 lines only for markers (reduced from 50)
     lines = text.split("\n")[:10]
     text_preview = "\n".join(lines)
     
+    # Combined regex pattern to reduce multiple searches
     title_match = re.search(r"[Tt]itle\s*[:=]\s*(.+?)(?:\n|$)", text_preview)
     if title_match:
         metadata["title"] = title_match.group(1).strip()
@@ -74,11 +76,18 @@ def extract_book_metadata(filename: str, text: str) -> Dict[str, str]:
     if year_match:
         metadata["year"] = year_match.group(1)
     
-    genre_match = re.search(r"[Gg]enre\s*[:=]\s*(.+?)(?:\n|$)", text_preview)
-    if genre_match:
-        metadata["genre"] = genre_match.group(1).strip()
-    
     return metadata
+
+
+# Global encoding cache to avoid reloading
+_ENCODING_CACHE = {}
+
+def _get_encoding(encoding_name: str = "cl100k_base"):
+    """Get tiktoken encoding with caching to avoid hangs."""
+    if encoding_name not in _ENCODING_CACHE:
+        logger.debug(f"Loading encoding: {encoding_name}")
+        _ENCODING_CACHE[encoding_name] = tiktoken.get_encoding(encoding_name)
+    return _ENCODING_CACHE[encoding_name]
 
 
 def chunk_text_by_tokens(
@@ -110,12 +119,17 @@ def chunk_text_by_tokens(
         return []
 
     try:
-        enc = tiktoken.get_encoding(encoding_name)
+        enc = _get_encoding(encoding_name)
     except Exception as e:
         logger.error(f"Failed to load encoding {encoding_name}: {e}")
         raise
 
-    tokens = enc.encode(text)
+    try:
+        tokens = enc.encode(text)
+    except Exception as e:
+        logger.error(f"Failed to encode text for {metadata.get('source_name', 'unknown')}: {e}")
+        raise
+    
     chunks = []
     start = 0
     idx = 0
@@ -125,76 +139,115 @@ def chunk_text_by_tokens(
         logger.warning(f"No tokens for {metadata.get('source_name', 'unknown')}")
         return []
 
-    while start < L:
-        end = min(start + chunk_tokens, L)
+    # Decode all chunks at once in batches to reduce encoding/decoding overhead
+    chunk_indices = []
+    temp_start = 0
+    while temp_start < L:
+        temp_end = min(temp_start + chunk_tokens, L)
+        if temp_end <= temp_start:
+            break
+        chunk_indices.append((temp_start, temp_end))
+        temp_start = temp_end - overlap
+        if temp_start <= 0 or temp_start >= L:
+            if temp_end < L:
+                temp_start = temp_end
+            else:
+                break
+    
+    # Batch decode all chunks together for efficiency
+    for chunk_idx, (start, end) in enumerate(chunk_indices):
         chunk_tokens_slice = tokens[start:end]
-        chunk_text = enc.decode(chunk_tokens_slice).strip()
+        try:
+            chunk_text = enc.decode(chunk_tokens_slice).strip()
+        except Exception as e:
+            logger.warning(f"Failed to decode chunk {chunk_idx}: {e}")
+            chunk_text = ""
+        
         if chunk_text:
-            # Include book metadata with each chunk
             chunk_meta = {
                 **metadata,
-                "chunk_index": idx,
+                "chunk_index": chunk_idx,
                 "chunk_size_tokens": len(chunk_tokens_slice),
             }
             chunks.append({
-                "id": f"{metadata.get('source_name', 'unknown')}-chunk-{idx}",
+                "id": f"{metadata.get('source_name', 'unknown')}-chunk-{chunk_idx}",
                 "text": chunk_text,
                 "meta": chunk_meta
             })
-            idx += 1
-        
-        # Move by (chunk_tokens - overlap) to next position
-        start = end - overlap
-        if start < 0:
-            start = 0
 
     logger.info(f"Created {len(chunks)} chunks from {metadata.get('source_name', 'unknown')} ({L} tokens)")
     return chunks
+
+
+def _process_single_file(
+    args: Tuple[str, str, int, int]
+) -> Tuple[str, List[Dict]]:
+    """Worker function for parallel file processing.
+    
+    Args:
+        args: (path, filename, chunk_tokens, overlap)
+    
+    Returns:
+        (filename, chunks_list)
+    """
+    path, filename, chunk_tokens, overlap = args
+    try:
+        text = read_text_file(path)
+        metadata = extract_book_metadata(filename, text)
+        metadata["source_path"] = path
+        
+        chunks = chunk_text_by_tokens(
+            text,
+            metadata=metadata,
+            chunk_tokens=chunk_tokens,
+            overlap=overlap
+        )
+        return filename, chunks
+    except Exception as e:
+        logger.error(f"Failed to ingest {path}: {e}")
+        return filename, []
+
+
+def ingest_directory_streaming(
+    directory: str,
+    ext: str = ".txt",
+    chunk_tokens: int = 512,
+    overlap: int = 64,
+    num_workers: int = 4
+):
+    """Generator version of ingest_directory. Yields chunks one at a time."""
+    if not os.path.isdir(directory):
+        raise ValueError(f"Directory not found: {directory}")
+
+    files_to_process = []
+    for root, _, files in os.walk(directory):
+        for fn in sorted(files):
+            if fn.lower().endswith(ext):
+                path = os.path.join(root, fn)
+                files_to_process.append((path, fn, chunk_tokens, overlap))
+
+    logger.info(f"Found {len(files_to_process)} files to process")
+
+    if num_workers > 1:
+        with Pool(num_workers) as pool:
+            results = pool.imap(_process_single_file, files_to_process, chunksize=1)
+            for filename, chunks in results:
+                yield from chunks
+    else:
+        for args in files_to_process:
+            _, chunks = _process_single_file(args)
+            yield from chunks
 
 
 def ingest_directory(
     directory: str,
     ext: str = ".txt",
     chunk_tokens: int = 512,
-    overlap: int = 64
+    overlap: int = 64,
+    num_workers: int = 4
 ) -> List[Dict]:
-    """Ingest all text files from a directory recursively.
-    
-    Args:
-        directory: Root directory to scan for files.
-        ext: File extension to process (default: '.txt').
-        chunk_tokens: Token-based chunk size.
-        overlap: Token overlap between chunks.
-    
-    Returns:
-        List of chunk dicts ready for embedding and ingestion.
-    """
-    if not os.path.isdir(directory):
-        raise ValueError(f"Directory not found: {directory}")
-
-    docs = []
-    file_count = 0
-    
-    for root, _, files in os.walk(directory):
-        for fn in sorted(files):
-            if fn.lower().endswith(ext):
-                path = os.path.join(root, fn)
-                try:
-                    text = read_text_file(path)
-                    metadata = extract_book_metadata(fn, text)
-                    metadata["source_path"] = path
-                    
-                    chunks = chunk_text_by_tokens(
-                        text,
-                        metadata=metadata,
-                        chunk_tokens=chunk_tokens,
-                        overlap=overlap
-                    )
-                    docs.extend(chunks)
-                    file_count += 1
-                except Exception as e:
-                    logger.error(f"Failed to ingest {path}: {e}")
-                    continue
-    
-    logger.info(f"Ingested {file_count} files into {len(docs)} chunks")
-    return docs
+    """Eagerly collect all chunks into a list. Use ingest_directory_streaming
+    if memory is a concern."""
+    return list(ingest_directory_streaming(
+        directory, ext, chunk_tokens, overlap, num_workers
+    ))

@@ -1,9 +1,7 @@
 from typing import List, Dict, Optional
 import chromadb
-from chromadb.config import Settings
 import os
 import logging
-from chromadb.client import Client
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +21,8 @@ class ChromaVectorStore:
         os.makedirs(persist_directory, exist_ok=True)
         
         try:
-            self.client = Client(Settings(
-                chroma_db_impl="duckdb+parquet",
-                persist_directory=persist_directory
-            ))
+            # Use new ChromaDB PersistentClient API
+            self.client = chromadb.PersistentClient(path=persist_directory)
             logger.info(f"Initialized ChromaDB at {persist_directory}")
         except Exception as e:
             logger.error(f"Failed to initialize ChromaDB: {e}")
@@ -34,11 +30,11 @@ class ChromaVectorStore:
         
         # Create or get collection
         try:
-            self.collection = self.client.get_collection(name=collection_name)
-            logger.info(f"Loaded existing collection '{collection_name}'")
-        except Exception:
-            self.collection = self.client.create_collection(name=collection_name)
-            logger.info(f"Created new collection '{collection_name}'")
+            self.collection = self.client.get_or_create_collection(name=collection_name)
+            logger.info(f"Loaded or created collection '{collection_name}'")
+        except Exception as e:
+            logger.error(f"Failed to get/create collection: {e}")
+            raise
 
     def add(
         self,
@@ -144,12 +140,12 @@ class ChromaVectorStore:
             return {}
 
     def persist(self) -> None:
-        """Persist the collection to disk. ChromaDB usually does this automatically."""
+        """Persist the collection to disk. ChromaDB PersistentClient does this automatically."""
         try:
-            self.client.persist()
-            logger.info("Persisted ChromaDB to disk")
+            # PersistentClient automatically persists, but this is a no-op for compatibility
+            logger.info("ChromaDB using PersistentClient (automatic persistence)")
         except Exception as e:
-            logger.warning(f"Persistence failed (may be automatic): {e}")
+            logger.warning(f"Persistence check failed: {e}")
 
     @classmethod
     def load(

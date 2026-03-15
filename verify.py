@@ -39,8 +39,9 @@ def check_files():
             "example.py",
         ],
         "Data": [
-            "data/sample_book.txt",
-        ],
+            "data/amazon-books/bestsellers_with_categories.csv",
+            "data/goodreads/books.csv"
+        ]
     }
     
     all_ok = True

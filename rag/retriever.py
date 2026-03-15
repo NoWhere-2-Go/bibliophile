@@ -31,13 +31,17 @@ class Retriever:
             List of result dicts with fields: id, score, distance, metadata, document.
         """
         try:
-            logger.debug(f"Retrieving top-{top_k} for query: {query[:50]}...")
+            logger.info(f"Retrieving top-{top_k} results for query: '{query[:60]}...'")
+            logger.debug("Step 1: Embedding query text...")
             qv = self.embedder.embed([query])[0]
+            logger.debug(f"✓ Query embedded: shape {qv.shape}")
+            
+            logger.debug("Step 2: Searching vector store...")
             results = self.store.search(qv.tolist(), top_k=top_k, where=where)
-            logger.info(f"Retrieved {len(results)} results")
+            logger.info(f"✓ Retrieved {len(results)} results")
             return results
         except Exception as e:
-            logger.error(f"Retrieval failed: {e}")
+            logger.error(f"Retrieval failed: {e}", exc_info=True)
             raise
 
     def build_prompt(

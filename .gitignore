@@ -20,6 +20,12 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Data files
+processed_books/
+data/
+books/
+bookss/
+
 # Vector stores and data
 chroma_db/
 chroma_db_*/
