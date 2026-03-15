@@ -3,6 +3,7 @@ import os
 import logging
 import re
 from multiprocessing import Pool
+from itertools import islice
 from functools import partial
 
 try:
@@ -208,12 +209,19 @@ def _process_single_file(
         return filename, []
 
 
+def _batched(iterable, n):
+    it = iter(iterable)
+    while chunk := list(islice(it, n)):
+        yield chunk
+
+
 def ingest_directory_streaming(
     directory: str,
     ext: str = ".txt",
     chunk_tokens: int = 512,
     overlap: int = 64,
-    num_workers: int = 4
+    num_workers: int = 1,
+    limit: Optional[int] = None
 ):
     """Generator version of ingest_directory. Yields chunks one at a time."""
     if not os.path.isdir(directory):
@@ -226,25 +234,31 @@ def ingest_directory_streaming(
                 path = os.path.join(root, fn)
                 files_to_process.append((path, fn, chunk_tokens, overlap))
 
+    if limit:
+        files_to_process = files_to_process[:limit]   # add this, after the walk
+
     logger.info(f"Found {len(files_to_process)} files to process")
+    if not files_to_process:
+        logger.warning(f"No {ext} files found in {directory}")
+        return
 
     if num_workers > 1:
         with Pool(num_workers) as pool:
-            results = pool.imap(_process_single_file, files_to_process, chunksize=1)
-            for filename, chunks in results:
-                yield from chunks
+            for file_batch in _batched(files_to_process, 200):
+                results = pool.imap(_process_single_file, file_batch, chunksize=1)
+                for filename, chunks in results:
+                    yield from chunks
     else:
         for args in files_to_process:
             _, chunks = _process_single_file(args)
             yield from chunks
-
 
 def ingest_directory(
     directory: str,
     ext: str = ".txt",
     chunk_tokens: int = 512,
     overlap: int = 64,
-    num_workers: int = 4
+    num_workers: int = 1
 ) -> List[Dict]:
     """Eagerly collect all chunks into a list. Use ingest_directory_streaming
     if memory is a concern."""

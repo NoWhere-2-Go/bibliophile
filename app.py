@@ -86,6 +86,7 @@ def cmd_ingest(args):
             chunk_tokens=args.chunk_size,
             overlap=args.overlap,
             num_workers=args.workers,
+            limit=args.limit,
         ):
             batch_texts.append(chunk["text"])
             batch_docs.append(chunk)
@@ -186,7 +187,8 @@ Examples:
     ingest_parser.add_argument("--chunk-size", type=int, default=512, help="Token-based chunk size (default: 512)")
     ingest_parser.add_argument("--overlap", type=int, default=64, help="Token overlap between chunks (default: 64)")
     ingest_parser.add_argument("--batch-size", type=int, default=64, help="Batch size for embedding and storage (default: 64)")
-    ingest_parser.add_argument("--workers", type=int, default=4, help="Parallel workers for file reading/chunking (default: 4)")
+    ingest_parser.add_argument("--workers", type=int, default=1, help="Parallel workers for file reading/chunking (default: 1)")
+    ingest_parser.add_argument("--limit",type=int,default=None,help="Cap the number of files to ingest (default: all)")
     ingest_parser.set_defaults(func=cmd_ingest)
 
     query_parser = subparsers.add_parser("query", help="Query the vector store")
