@@ -1,10 +1,9 @@
-from typing import List, Dict, Optional, Tuple
-import os
 import logging
+import os
 import re
-from multiprocessing import Pool
 from itertools import islice
-from functools import partial
+from multiprocessing import Pool
+from typing import List, Dict, Optional, Tuple
 
 try:
     import tiktoken
@@ -132,8 +131,6 @@ def chunk_text_by_tokens(
         raise
     
     chunks = []
-    start = 0
-    idx = 0
     L = len(tokens)
     
     if L == 0:
@@ -235,7 +232,7 @@ def ingest_directory_streaming(
                 files_to_process.append((path, fn, chunk_tokens, overlap))
 
     if limit:
-        files_to_process = files_to_process[:limit]   # add this, after the walk
+        files_to_process = files_to_process[:limit]
 
     logger.info(f"Found {len(files_to_process)} files to process")
     if not files_to_process:
@@ -245,7 +242,7 @@ def ingest_directory_streaming(
     if num_workers > 1:
         with Pool(num_workers) as pool:
             for file_batch in _batched(files_to_process, 200):
-                results = pool.imap(_process_single_file, file_batch, chunksize=1)
+                results = pool.map(_process_single_file, file_batch, chunksize=1)
                 for filename, chunks in results:
                     yield from chunks
     else:
@@ -265,3 +262,40 @@ def ingest_directory(
     return list(ingest_directory_streaming(
         directory, ext, chunk_tokens, overlap, num_workers
     ))
+
+def ingest_metadata_stubs(
+    directory: str,
+    ext: str = ".txt",
+    limit: int = None,
+):
+    """Ingest metadata-only book stub files. Each file = one document."""
+    if not os.path.isdir(directory):
+        raise ValueError(f"Directory not found: {directory}")
+
+    files = sorted(
+        f for f in os.listdir(directory) if f.lower().endswith(ext)
+    )
+    if limit:
+        files = files[:limit]
+
+    logger.info(f"Found {len(files)} stub files to ingest")
+
+    for fn in files:
+        path = os.path.join(directory, fn)
+        try:
+            text = read_text_file(path)
+            if not text.strip():
+                logger.warning(f"Empty file: {fn}")
+                continue
+
+            metadata = extract_book_metadata(fn, text)
+            metadata["source_path"] = path
+
+            yield {
+                "id": fn,
+                "text": text.strip(),
+                "meta": metadata,
+            }
+        except Exception as e:
+            logger.error(f"Failed to read {fn}: {e}")
+            continue

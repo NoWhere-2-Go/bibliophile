@@ -6,10 +6,10 @@ import sys
 import uuid
 from pathlib import Path
 
-from rag.ingest import ingest_directory_streaming
 from rag.embeddings import EmbeddingModel, batch_embed
 from rag.vectorstore import ChromaVectorStore
 from rag.retriever import Retriever
+from rag.ingest import ingest_directory_streaming, ingest_metadata_stubs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -81,17 +81,27 @@ def cmd_ingest(args):
         batch_docs.clear()
 
     try:
-        for chunk in ingest_directory_streaming(
-            str(input_dir),
-            chunk_tokens=args.chunk_size,
-            overlap=args.overlap,
-            num_workers=args.workers,
-            limit=args.limit,
-        ):
-            batch_texts.append(chunk["text"])
-            batch_docs.append(chunk)
-            if len(batch_texts) >= EMBED_BATCH:
-                flush_batch()
+        if args.workers > 1:
+            for chunk in ingest_directory_streaming(
+                str(input_dir),
+                chunk_tokens=args.chunk_size,
+                overlap=args.overlap,
+                num_workers=args.workers,
+            ):
+                batch_texts.append(chunk["text"])
+                batch_docs.append(chunk)
+                if len(batch_texts) >= EMBED_BATCH:
+                    flush_batch()
+        else:
+            logger.info('Starting ingestion')
+            for chunk in ingest_metadata_stubs(
+                    str(input_dir),
+                    limit=args.limit,
+            ):
+                batch_texts.append(chunk["text"])
+                batch_docs.append(chunk)
+                if len(batch_texts) >= EMBED_BATCH:
+                    flush_batch()
 
         flush_batch()
     except Exception as e:
